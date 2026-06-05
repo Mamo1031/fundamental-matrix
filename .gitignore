@@ -10,3 +10,6 @@ tasks/
 # ユーザーが撮った入力画像（サンプルの data/aloe*.jpg は追跡する）
 data/user/*
 !data/user/.gitkeep
+
+# 実行時の生成物（再生成可能。README 用のショーケース画像は assets/ に置く）
+outputs/
