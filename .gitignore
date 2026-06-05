@@ -2,3 +2,7 @@
 .venv/
 __pycache__/
 *.pyc
+
+# 内部ワークフロー用（公開リポジトリには含めない）
+CLAUDE.md
+tasks/
