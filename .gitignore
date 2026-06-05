@@ -6,3 +6,7 @@ __pycache__/
 # 内部ワークフロー用（公開リポジトリには含めない）
 CLAUDE.md
 tasks/
+
+# ユーザーが撮った入力画像（サンプルの data/aloe*.jpg は追跡する）
+data/user/*
+!data/user/.gitkeep
