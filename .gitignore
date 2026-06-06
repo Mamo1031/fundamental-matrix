@@ -13,3 +13,12 @@ data/user/*
 
 # 実行時の生成物（再生成可能。README 用のショーケース画像は assets/ に置く）
 outputs/
+
+# LaTeX のビルド成果物（report/report.pdf は成果物として追跡する）
+report/*.aux
+report/*.log
+report/*.out
+report/*.toc
+report/*.synctex.gz
+report/*.fls
+report/*.fdb_latexmk
