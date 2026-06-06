@@ -1,0 +1,16 @@
+[project]
+name = "fundamental-matrix"
+version = "0.1.0"
+description = "2 枚の画像から基礎行列を推定しエピポーラ線を描く汎用ツール"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "opencv-python>=4.8",
+    "numpy>=1.24",
+    "matplotlib>=3.7",
+]
+
+[tool.uv]
+# 単一スクリプト構成のためパッケージ化しない (virtual project)。
+# 依存だけを .venv に入れ、fundamental_matrix.py は `uv run` で直接実行する。
+package = false
