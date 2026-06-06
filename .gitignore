@@ -14,7 +14,7 @@ data/user/*
 # 実行時の生成物（再生成可能。README 用のショーケース画像は assets/ に置く）
 outputs/
 
-# LaTeX のビルド成果物（report/report.pdf は成果物として追跡する）
+# LaTeX のビルド成果物
 report/*.aux
 report/*.log
 report/*.out
@@ -22,3 +22,7 @@ report/*.toc
 report/*.synctex.gz
 report/*.fls
 report/*.fdb_latexmk
+
+# レポート本体は氏名・学籍番号を含むため public リポジトリには入れない（課題提出システムへ直接提出）
+report/*.pdf
+report/*.tex
