@@ -1,7 +1,7 @@
 [project]
 name = "fundamental-matrix"
 version = "0.1.0"
-description = "2 枚の画像から基礎行列を推定しエピポーラ線を描く汎用ツール"
+description = "General-purpose tool to estimate the fundamental matrix from two images and draw epipolar lines"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -11,6 +11,6 @@ dependencies = [
 ]
 
 [tool.uv]
-# 単一スクリプト構成のためパッケージ化しない (virtual project)。
-# 依存だけを .venv に入れ、fundamental_matrix.py は `uv run` で直接実行する。
+# Single-script layout, so it is not built as a package (virtual project).
+# Only the dependencies go into .venv; run fundamental_matrix.py directly with `uv run`.
 package = false

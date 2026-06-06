@@ -3,18 +3,18 @@
 __pycache__/
 *.pyc
 
-# 内部ワークフロー用（公開リポジトリには含めない）
+# Internal workflow files (not included in the public repository)
 CLAUDE.md
 tasks/
 
-# ユーザーが撮った入力画像（サンプルの data/aloe*.jpg は追跡する）
+# User-captured input images (the bundled data/aloe*.jpg samples are tracked)
 data/user/*
 !data/user/.gitkeep
 
-# 実行時の生成物（再生成可能。README 用のショーケース画像は assets/ に置く）
+# Runtime artifacts (regenerable; the README showcase image lives in assets/)
 outputs/
 
-# LaTeX のビルド成果物
+# LaTeX build artifacts
 report/*.aux
 report/*.log
 report/*.out
@@ -23,6 +23,7 @@ report/*.synctex.gz
 report/*.fls
 report/*.fdb_latexmk
 
-# レポート本体は氏名・学籍番号を含むため public リポジトリには入れない（課題提出システムへ直接提出）
+# The report itself contains the author's name and student ID, so it is kept out of
+# the public repository (submit it directly to the course submission system).
 report/*.pdf
 report/*.tex

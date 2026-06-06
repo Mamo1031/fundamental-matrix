@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
-"""基礎行列 (Fundamental Matrix) の推定とエピポーラ線の描画.
+"""Fundamental matrix estimation and epipolar line visualization.
 
-同一シーンを別視点から撮った 2 枚の画像から基礎行列 F を推定し、
-エピポーラ幾何を可視化する汎用ツール:
-  1. SIFT + ratio test で対応点を求める
-  2. 基礎行列 F を推定する (RANSAC + 正規化 8 点法)
-  3. エピポーラ線を描画する
-  4. 対応点が対応するエピポーラ線上に乗ることを定量・目視で確認する
+From two images of the same scene taken from different viewpoints, estimate the
+fundamental matrix F and visualize the epipolar geometry. A general-purpose tool:
+  1. Find point correspondences with SIFT + ratio test.
+  2. Estimate the fundamental matrix F (RANSAC + normalized 8-point algorithm).
+  3. Draw the epipolar lines.
+  4. Confirm, quantitatively and visually, that corresponding points lie on
+     their corresponding epipolar lines.
 
-使い方:
-  uv run python fundamental_matrix.py                           # 付属サンプルで実行
-  uv run python fundamental_matrix.py --img0 a.jpg --img1 b.jpg # 任意の 2 枚で実行
+Usage:
+  uv run python fundamental_matrix.py                           # run on the bundled sample
+  uv run python fundamental_matrix.py --img0 a.jpg --img1 b.jpg # run on any two images
 
-規約:
-  本コードは pts1^T F pts0 = 0 を満たす F を用いる (OpenCV と同じ規約)。
-  x0^T F' x1 = 0 の表記とは F' = F^T で同じ行列を指しており、
-  どちらの画像を「左」に置くかの違いにすぎない。
+Convention:
+  This code uses an F that satisfies pts1^T F pts0 = 0 (same as OpenCV).
+  The alternative notation x0^T F' x1 = 0 refers to the same matrix with
+  F' = F^T; it only differs in which image is placed on the "left".
 """
 from __future__ import annotations
 
@@ -26,34 +27,18 @@ import cv2
 import numpy as np
 import matplotlib
 
-matplotlib.use("Agg")  # ディスプレイ不要 (ヘッドレス環境で図を保存)
+matplotlib.use("Agg")  # no display needed (save figures in headless environments)
 import matplotlib.pyplot as plt
-import matplotlib.font_manager as fm
-
-
-def _setup_japanese_font() -> None:
-    """日本語フォントがあれば matplotlib に登録する (図のタイトルの豆腐化を防ぐ)。"""
-    candidates = [
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/truetype/fonts-japanese-gothic.ttf",
-        "/usr/share/fonts/opentype/ipafont-gothic/ipagp.ttf",
-    ]
-    for path in candidates:
-        if os.path.exists(path):
-            fm.fontManager.addfont(path)
-            plt.rcParams["font.family"] = fm.FontProperties(fname=path).get_name()
-            break
-    plt.rcParams["axes.unicode_minus"] = False
 
 
 # --------------------------------------------------------------------------- #
-# 1. 画像の読み込み
+# 1. Image loading
 # --------------------------------------------------------------------------- #
 def load_image(path: str, max_side: int = 1200) -> np.ndarray:
-    """画像を読み込み、長辺が max_side を超える場合は縮小する (自分の写真対応)。"""
+    """Load an image; downscale it if the longer side exceeds max_side (for phone photos)."""
     img = cv2.imread(path, cv2.IMREAD_COLOR)
     if img is None:
-        raise FileNotFoundError(f"画像を読み込めません: {path}")
+        raise FileNotFoundError(f"Cannot read image: {path}")
     h, w = img.shape[:2]
     scale = max_side / float(max(h, w))
     if scale < 1.0:
@@ -63,10 +48,10 @@ def load_image(path: str, max_side: int = 1200) -> np.ndarray:
 
 
 # --------------------------------------------------------------------------- #
-# 2. 特徴点検出とマッチング (SIFT + Lowe ratio test)
+# 2. Feature detection and matching (SIFT + Lowe ratio test)
 # --------------------------------------------------------------------------- #
 def detect_and_match(img0: np.ndarray, img1: np.ndarray, ratio: float = 0.75):
-    """SIFT で特徴点を検出し、KNN マッチ + ratio test で対応点を返す。"""
+    """Detect SIFT features and return correspondences via KNN match + ratio test."""
     gray0 = cv2.cvtColor(img0, cv2.COLOR_BGR2GRAY)
     gray1 = cv2.cvtColor(img1, cv2.COLOR_BGR2GRAY)
 
@@ -74,9 +59,9 @@ def detect_and_match(img0: np.ndarray, img1: np.ndarray, ratio: float = 0.75):
     kp0, des0 = sift.detectAndCompute(gray0, None)
     kp1, des1 = sift.detectAndCompute(gray1, None)
     if des0 is None or des1 is None:
-        raise RuntimeError("特徴点が検出できませんでした。")
+        raise RuntimeError("No features were detected.")
 
-    # FLANN (KD-Tree) による近傍探索
+    # FLANN (KD-Tree) nearest-neighbour search
     flann = cv2.FlannBasedMatcher(dict(algorithm=1, trees=5), dict(checks=50))
     knn = flann.knnMatch(des0, des1, k=2)
 
@@ -94,12 +79,14 @@ def detect_and_match(img0: np.ndarray, img1: np.ndarray, ratio: float = 0.75):
 
 
 # --------------------------------------------------------------------------- #
-# 3. 基礎行列の推定: 正規化 8 点法 (自前実装)
+# 3. Fundamental matrix estimation: normalized 8-point algorithm (from scratch)
 # --------------------------------------------------------------------------- #
 def normalize_points(pts: np.ndarray):
-    """Hartley 正規化: 重心を原点へ、原点からの平均距離を sqrt(2) にする。
+    """Hartley normalization: move the centroid to the origin and scale so that
+    the mean distance from the origin is sqrt(2).
 
-    返り値: (正規化済み同次座標 Nx3, 変換行列 T 3x3)。数値安定性に必須。
+    Returns (normalized homogeneous coords Nx3, transform matrix T 3x3).
+    Essential for numerical stability.
     """
     centroid = pts.mean(axis=0)
     dist = np.sqrt(((pts - centroid) ** 2).sum(axis=1)).mean()
@@ -112,59 +99,62 @@ def normalize_points(pts: np.ndarray):
 
 
 def eight_point(pts0: np.ndarray, pts1: np.ndarray) -> np.ndarray:
-    """正規化 8 点法で F を推定 (pts1^T F pts0 = 0)。rank-2 を強制する。
+    """Estimate F with the normalized 8-point algorithm (pts1^T F pts0 = 0) and
+    enforce rank 2.
 
-    8 点法の線形方程式
+    The linear equation of the 8-point algorithm
         x0(x1 f00 + y1 f01 + f02) + y0(x1 f10 + y1 f11 + f12)
             + (x1 f20 + y1 f21 + f22) = 0
-    を全対応点について並べた over-determined な系を SVD で最小二乗的に解く。
+    is assembled for all correspondences into an over-determined system and
+    solved in a least-squares sense via SVD.
     """
     pn0, T0 = normalize_points(pts0)
     pn1, T1 = normalize_points(pts1)
 
-    # pts1^T F pts0 = 0 から、各対応について A の 1 行を作る。
-    xa, ya = pn1[:, 0], pn1[:, 1]   # 左から掛ける点 (image1)
-    xb, yb = pn0[:, 0], pn0[:, 1]   # 右から掛ける点 (image0)
+    # Build one row of A per correspondence from pts1^T F pts0 = 0.
+    xa, ya = pn1[:, 0], pn1[:, 1]   # left-multiplying point (image1)
+    xb, yb = pn0[:, 0], pn0[:, 1]   # right-multiplying point (image0)
     A = np.stack([xa * xb, xa * yb, xa,
                   ya * xb, ya * yb, ya,
                   xb,      yb,      np.ones_like(xa)], axis=1)
 
-    # A f = 0 の最小二乗解 = 最小特異値に対応する右特異ベクトル
+    # Least-squares solution of A f = 0: right singular vector of the smallest singular value
     _, _, Vt = np.linalg.svd(A)
     F = Vt[-1].reshape(3, 3)
 
-    # rank-2 強制 (基礎行列は det F = 0 を満たす)
+    # Enforce rank 2 (a fundamental matrix satisfies det F = 0)
     U, S, Vt2 = np.linalg.svd(F)
     S[-1] = 0.0
     F = U @ np.diag(S) @ Vt2
 
-    # 正規化を元に戻す: F = T1^T F_norm T0
+    # Undo the normalization: F = T1^T F_norm T0
     F = T1.T @ F @ T0
     return F / F[2, 2] if abs(F[2, 2]) > 1e-12 else F / np.linalg.norm(F)
 
 
 # --------------------------------------------------------------------------- #
-# 4. 評価 (対称エピポーラ距離) と比較ユーティリティ
+# 4. Evaluation (symmetric epipolar distance) and comparison utilities
 # --------------------------------------------------------------------------- #
 def symmetric_epipolar_distance(F: np.ndarray, pts0: np.ndarray,
                                 pts1: np.ndarray) -> np.ndarray:
-    """各対応点の対称エピポーラ距離 [px] を返す。
+    """Return the symmetric epipolar distance [px] for each correspondence.
 
-    点 p1 と、p0 が引くエピポーラ線 l1 = F p0 との距離、および
-    点 p0 と、p1 が引くエピポーラ線 l0 = F^T p1 との距離の平均。
+    The average of the distance from p1 to the epipolar line l1 = F p0 induced by
+    p0, and the distance from p0 to the epipolar line l0 = F^T p1 induced by p1.
     """
     p0 = np.hstack([pts0, np.ones((len(pts0), 1))])
     p1 = np.hstack([pts1, np.ones((len(pts1), 1))])
-    l1 = (F @ p0.T).T       # image1 上の線
-    l0 = (F.T @ p1.T).T     # image0 上の線
-    num = np.sum(p1 * l1, axis=1)  # p1^T F p0 (= p0^T F^T p1, 共通)
+    l1 = (F @ p0.T).T       # lines in image1
+    l0 = (F.T @ p1.T).T     # lines in image0
+    num = np.sum(p1 * l1, axis=1)  # p1^T F p0 (= p0^T F^T p1, shared)
     d1 = np.abs(num) / np.sqrt(l1[:, 0] ** 2 + l1[:, 1] ** 2)
     d0 = np.abs(num) / np.sqrt(l0[:, 0] ** 2 + l0[:, 1] ** 2)
     return 0.5 * (d0 + d1)
 
 
 def normalize_for_compare(F: np.ndarray) -> np.ndarray:
-    """Frobenius ノルムを 1 に、最大絶対値要素の符号を正に揃える (比較用)。"""
+    """Set the Frobenius norm to 1 and the sign of the largest-magnitude element
+    to positive (for scale/sign-invariant comparison)."""
     F = F / np.linalg.norm(F)
     if F.flatten()[np.argmax(np.abs(F))] < 0:
         F = -F
@@ -172,22 +162,24 @@ def normalize_for_compare(F: np.ndarray) -> np.ndarray:
 
 
 # --------------------------------------------------------------------------- #
-# 5. 可視化
+# 5. Visualization
 # --------------------------------------------------------------------------- #
 def _line_endpoints(line, w, h):
-    """直線 ax+by+c=0 と画像枠の交点 2 点を返す (水平/垂直どちらでも安定)。"""
+    """Return the two intersection points of the line ax+by+c=0 with the image
+    border (stable for both horizontal and vertical lines)."""
     a, b, c = line
-    if abs(b) >= abs(a):  # 横向きの線 -> x でパラメータ化
+    if abs(b) >= abs(a):  # roughly horizontal line -> parameterize by x
         p0 = (0, -c / b)
         p1 = (w, -(c + a * w) / b)
-    else:                 # 縦向きの線 -> y でパラメータ化
+    else:                 # roughly vertical line -> parameterize by y
         p0 = (-c / a, 0)
         p1 = (-(c + b * h) / a, h)
     return (int(round(p0[0])), int(round(p0[1]))), (int(round(p1[0])), int(round(p1[1])))
 
 
 def draw_epilines(img0, img1, pts0, pts1, F, n=12, seed=0):
-    """N 組の対応点を選び、相手画像にエピポーラ線を色対応で描画した 2 枚を返す。"""
+    """Select N correspondences and return the two images with color-matched
+    epipolar lines drawn in the other image."""
     rng = np.random.default_rng(seed)
     idx = rng.choice(len(pts0), size=min(n, len(pts0)), replace=False)
     p0 = pts0[idx].astype(np.float32)
@@ -198,9 +190,9 @@ def draw_epilines(img0, img1, pts0, pts1, F, n=12, seed=0):
     h0, w0 = im0.shape[:2]
     h1, w1 = im1.shape[:2]
 
-    # image1 上のエピポーラ線 (image0 の点 p0 から): whichImage=1
+    # epipolar lines in image1 (from points p0 in image0): whichImage=1
     lines1 = cv2.computeCorrespondEpilines(p0.reshape(-1, 1, 2), 1, F).reshape(-1, 3)
-    # image0 上のエピポーラ線 (image1 の点 p1 から): whichImage=2
+    # epipolar lines in image0 (from points p1 in image1): whichImage=2
     lines0 = cv2.computeCorrespondEpilines(p1.reshape(-1, 1, 2), 2, F).reshape(-1, 3)
 
     for l0, l1, q0, q1, col in zip(lines0, lines1, p0, p1, colors):
@@ -229,60 +221,62 @@ def save_side_by_side(imgL, imgR, titleL, titleR, suptitle, path):
 
 
 # --------------------------------------------------------------------------- #
-# メイン
+# Main
 # --------------------------------------------------------------------------- #
 def main():
-    ap = argparse.ArgumentParser(description="基礎行列の推定とエピポーラ線の描画")
-    ap.add_argument("--img0", default="data/aloeL.jpg", help="視点0の画像")
-    ap.add_argument("--img1", default="data/aloeR.jpg", help="視点1の画像")
-    ap.add_argument("--out", default="outputs", help="出力ディレクトリ")
-    ap.add_argument("--ratio", type=float, default=0.75, help="Lowe ratio test の閾値")
-    ap.add_argument("--max-side", type=int, default=1200, help="入力画像の長辺上限[px]")
-    ap.add_argument("--num-epilines", type=int, default=12, help="描画するエピポーラ線の本数")
+    ap = argparse.ArgumentParser(
+        description="Fundamental matrix estimation and epipolar line visualization")
+    ap.add_argument("--img0", default="data/aloeL.jpg", help="image of viewpoint 0")
+    ap.add_argument("--img1", default="data/aloeR.jpg", help="image of viewpoint 1")
+    ap.add_argument("--out", default="outputs", help="output directory")
+    ap.add_argument("--ratio", type=float, default=0.75, help="Lowe ratio test threshold")
+    ap.add_argument("--max-side", type=int, default=1200,
+                    help="max length of the longer image side [px]")
+    ap.add_argument("--num-epilines", type=int, default=12,
+                    help="number of epipolar lines to draw")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
-    _setup_japanese_font()
 
-    # --- ステップ1: 2 枚の画像 -------------------------------------------- #
+    # --- Step 1: two images ----------------------------------------------- #
     img0 = load_image(args.img0, args.max_side)
     img1 = load_image(args.img1, args.max_side)
-    print(f"[1] 画像: {args.img0} {img0.shape[1]}x{img0.shape[0]} / "
+    print(f"[1] images: {args.img0} {img0.shape[1]}x{img0.shape[0]} / "
           f"{args.img1} {img1.shape[1]}x{img1.shape[0]}")
 
-    # --- 対応点 ----------------------------------------------------------- #
+    # --- Correspondences -------------------------------------------------- #
     kp0, kp1, good, pts0, pts1 = detect_and_match(img0, img1, args.ratio)
-    print(f"    SIFT 対応点 (ratio test 後): {len(pts0)} 組")
+    print(f"    SIFT correspondences (after ratio test): {len(pts0)}")
     if len(pts0) < 8:
-        raise SystemExit("対応点が 8 組未満です。--ratio を上げるか別の画像を試してください。")
+        raise SystemExit("Fewer than 8 correspondences. Increase --ratio or try other images.")
 
-    # --- ステップ2: F の推定 (RANSAC で外れ値除去 → inlier で 8 点法) ----- #
+    # --- Step 2: estimate F (RANSAC for outlier rejection -> 8-point on inliers) --- #
     F_cv, mask = cv2.findFundamentalMat(
         pts0, pts1, cv2.USAC_MAGSAC,
         ransacReprojThreshold=1.0, confidence=0.999, maxIters=10000)
     mask = mask.ravel().astype(bool)
     in0, in1 = pts0[mask], pts1[mask]
-    print(f"[2] RANSAC inlier: {int(mask.sum())} / {len(mask)} 組")
+    print(f"[2] RANSAC inliers: {int(mask.sum())} / {len(mask)}")
 
-    F_8 = eight_point(in0, in1)  # 自前の正規化 8 点法 (inlier に対して)
+    F_8 = eight_point(in0, in1)  # our own normalized 8-point algorithm (on inliers)
 
-    # OpenCV の結果と比較
+    # Compare against OpenCV's result
     diff = np.linalg.norm(normalize_for_compare(F_cv) - normalize_for_compare(F_8))
 
-    # --- 定量検証 (対称エピポーラ距離) ----------------------------------- #
+    # --- Quantitative check (symmetric epipolar distance) ----------------- #
     d8 = symmetric_epipolar_distance(F_8, in0, in1)
     dcv = symmetric_epipolar_distance(F_cv, in0, in1)
-    print(f"    平均対称エピポーラ距離 [px]: 自前8点法={d8.mean():.3f} (中央値{np.median(d8):.3f}) / "
-          f"OpenCV={dcv.mean():.3f}")
-    print(f"    自前F と OpenCV F の差 (正規化後 Frobenius): {diff:.4f}")
+    print(f"    mean symmetric epipolar distance [px]: ours={d8.mean():.3f} "
+          f"(median {np.median(d8):.3f}) / OpenCV={dcv.mean():.3f}")
+    print(f"    difference between ours and OpenCV F (normalized Frobenius): {diff:.4f}")
 
     np.set_printoptions(precision=5, suppress=True)
-    print("\n[F] 自前 正規化8点法 (F[2,2]=1 に正規化):")
+    print("\n[F] ours, normalized 8-point (scaled to F[2,2]=1):")
     print(F_8)
     print("\n[F] OpenCV findFundamentalMat (MAGSAC):")
     print(F_cv / F_cv[2, 2])
 
-    # --- ステップ3 & 4: エピポーラ線の描画と目視確認用の図 ---------------- #
-    # マッチ図 (inlier のみ, 最大 80 本)
+    # --- Steps 3 & 4: draw epipolar lines and figures for visual check ---- #
+    # match figure (inliers only, up to 80)
     good_in = [g for g, m in zip(good, mask) if m]
     vis_match = cv2.drawMatches(img0, kp0, img1, kp1, good_in[:80], None,
                                 matchColor=(0, 255, 0), singlePointColor=None,
@@ -290,30 +284,32 @@ def main():
     p_match = os.path.join(args.out, "matches.png")
     cv2.imwrite(p_match, vis_match)
 
-    # エピポーラ線図 (自前 F を使用)
+    # epipolar line figure (using our F)
     e0, e1 = draw_epilines(img0, img1, in0, in1, F_8, n=args.num_epilines)
     p_epi = os.path.join(args.out, "epilines.png")
     save_side_by_side(
         e0, e1,
-        "視点0 (image0)",
-        "視点1 (image1)",
-        f"エピポーラ線 — 各色の点は、相手画像の同じ色のエピポーラ線上に乗る"
-        f"（自前8点法 F, 平均エピポーラ距離 {d8.mean():.2f}px）",
+        "View 0 (image0)",
+        "View 1 (image1)",
+        f"Epipolar lines: each colored point lies on the same-colored epipolar "
+        f"line in the other view (ours, 8-point F, mean epipolar distance {d8.mean():.2f} px)",
         p_epi)
 
-    # 結果サマリをテキストでも保存
+    # Save a text summary as well
     p_txt = os.path.join(args.out, "results.txt")
     with open(p_txt, "w") as f:
-        f.write("基礎行列推定 結果サマリ\n")
+        f.write("Fundamental matrix estimation summary\n")
         f.write(f"img0={args.img0}  img1={args.img1}\n")
-        f.write(f"SIFT対応点={len(pts0)}  RANSAC inlier={int(mask.sum())}\n")
-        f.write(f"平均対称エピポーラ距離[px]: 自前8点法={d8.mean():.4f}  OpenCV={dcv.mean():.4f}\n")
-        f.write(f"自前F と OpenCV F の差(正規化後)={diff:.5f}\n\n")
-        f.write("F (自前 正規化8点法, F[2,2]=1):\n" + np.array2string(F_8) + "\n\n")
+        f.write(f"SIFT correspondences={len(pts0)}  RANSAC inliers={int(mask.sum())}\n")
+        f.write(f"mean symmetric epipolar distance [px]: ours={d8.mean():.4f}  "
+                f"OpenCV={dcv.mean():.4f}\n")
+        f.write(f"difference between ours and OpenCV F (normalized)={diff:.5f}\n\n")
+        f.write("F (ours, normalized 8-point, F[2,2]=1):\n" + np.array2string(F_8) + "\n\n")
         f.write("F (OpenCV MAGSAC, F[2,2]=1):\n" + np.array2string(F_cv / F_cv[2, 2]) + "\n")
 
-    print(f"\n[3,4] 出力: {p_match} / {p_epi} / {p_txt}")
-    print("      epilines.png で、各色の点が相手画像の同色エピポーラ線上に乗ることを確認してください。")
+    print(f"\n[3,4] outputs: {p_match} / {p_epi} / {p_txt}")
+    print("      In epilines.png, check that each colored point lies on the "
+          "same-colored epipolar line in the other image.")
 
 
 if __name__ == "__main__":
